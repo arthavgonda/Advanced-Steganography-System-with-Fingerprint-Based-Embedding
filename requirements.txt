@@ -1,0 +1,8 @@
+Pillow
+numpy
+jpegio
+soundfile
+scipy
+cryptography
+reedsolo
+torch

@@ -1,0 +1,1992 @@
+# Advanced Steganography System with Fingerprint-Based Embedding
+
+A comprehensive steganography toolkit supporting images, audio, video, and text with Bitcoin-style encryption, fingerprint-based pattern embedding, and advanced algorithms (F5, Phase Coding, H.264).
+
+---
+
+## Table of Contents
+
+1. [Overview](#overview)
+2. [How It Works](#how-it-works)
+3. [Installation](#installation)
+4. [Architecture](#architecture)
+5. [Command Reference](#command-reference)
+6. [Algorithms Explained](#algorithms-explained)
+7. [Workflows](#workflows)
+8. [Security Model](#security-model)
+9. [File Format Specifications](#file-format-specifications)
+10. [Troubleshooting](#troubleshooting)
+
+---
+
+## Overview
+
+This steganography system allows you to hide secret files inside cover files (images, audio, video) with the following features:
+
+- **Multiple File Types**: Images (JPEG/PNG), Audio (MP3/WAV/FLAC), Video (MP4/AVI/MKV), Text
+- **Advanced Algorithms**: F5 (JPEG), Differential Phase Coding (Audio), H.264 Coefficient Embedding (Video)
+- **Fingerprint-Based Embedding**: Non-linear pattern selection using encrypted fingerprints
+- **Bitcoin-Style Encryption**: SECP256K1 elliptic curve cryptography (same as Bitcoin)
+- **Error Correction**: Reed-Solomon ECC for robustness against corruption
+- **File Splitting**: Distribute large files across multiple cover files with random names
+- **High Quality Output**: FLAC 24-bit audio, lossless image processing
+
+---
+
+## How It Works
+
+### Core Concepts
+
+#### 1. **Fingerprint-Based Pattern Embedding**
+
+Traditional steganography embeds data sequentially (bit 1 at position 1, bit 2 at position 2, etc.). This is vulnerable to statistical analysis.
+
+**Our Approach:**
+- Generate a random fingerprint seed (16 bytes)
+- Use PRNG (seeded with fingerprint) to select random, non-linear positions
+- Embed bits at these scattered positions
+- Attacker needs the fingerprint to know where bits are hidden
+
+**Example:**
+```
+Traditional: [bit0, bit1, bit2, bit3, bit4, ...]
+Fingerprint: [bit0 at pos 1247, bit1 at pos 3891, bit2 at pos 42, ...]
+```
+
+#### 2. **Encrypted Fingerprint**
+
+When using `--encrypt`:
+- Fingerprint is encrypted with recipient's public key
+- Stored as `.fingerprint.enc` (binary, permissions 600)
+- Receiver decrypts with their private key before extraction
+- Even if attacker has stego file, cannot extract without private key
+
+#### 3. **Error Correction (Reed-Solomon)**
+
+- Adds redundancy (32 ECC symbols) to payload
+- Can recover from minor corruption, lossy compression, or transmission errors
+- Automatic encoding during embed, decoding during extract
+
+#### 4. **Compression**
+
+- Payload compressed with zlib (level 9) before embedding
+- Reduces required capacity by 30-70% for text/documents
+- Automatically selected if compressed size is smaller
+
+---
+
+## Installation
+
+### Prerequisites
+
+```bash
+# Python 3.8 or higher
+python3 --version
+
+# FFmpeg for audio/video processing
+sudo apt update
+sudo apt install ffmpeg
+```
+
+### Install Python Dependencies
+
+```bash
+pip install Pillow numpy jpegio soundfile scipy cryptography reedsolo --break-system-packages
+```
+
+**Dependencies Explained:**
+- `Pillow`: Image processing (PNG, BMP, WebP)
+- `numpy`: Numerical operations, bit manipulation
+- `jpegio`: JPEG DCT coefficient access for F5 algorithm
+- `soundfile`: High-quality audio I/O (FLAC, WAV)
+- `scipy`: Signal processing (FFT for phase coding)
+- `cryptography`: SECP256K1 elliptic curve crypto
+- `reedsolo`: Reed-Solomon error correction codes
+
+### Create Directory Structure
+
+```bash
+mkdir -p keys/contacts
+mkdir -p images/cover_images images/stego_output
+mkdir -p audio
+mkdir -p data/secrets data/extracted
+```
+
+---
+
+## Architecture
+
+### File Structure
+
+```
+.
+├── main.py                 # CLI interface and workflow orchestration
+├── steganography.py        # Core embedding/extraction algorithms
+├── crypto.py               # Bitcoin-style SECP256K1 encryption
+├── file_handler.py         # Path normalization utilities
+├── requirements.txt        # Python dependencies
+│
+├── keys/                   # Cryptographic keys
+│   ├── my_private.pem      # Your private key
+│   ├── my_public.pem       # Your public key
+│   └── contacts/           # Public keys of recipients
+│       ├── bob_public.pem
+│       └── charlie_public.pem
+│
+├── images/
+│   ├── cover_images/       # Original cover images
+│   └── stego_output/       # Output stego files
+│       ├── stego.jpg
+│       └── .fingerprint.enc
+│
+├── audio/                  # Audio cover files
+├── data/
+│   ├── secrets/            # Files to hide
+│   └── extracted/          # Extracted files
+│
+└── signatures/             # Digital signatures
+```
+
+### Data Flow
+
+```
+EMBEDDING:
+Secret File → Encrypt (optional) → Compress → Add ECC → 
+Generate Fingerprint → Select Random Positions → Embed in Cover → Stego File
+
+EXTRACTION:
+Stego File → Decrypt Fingerprint → Find Positions → Extract Bits → 
+Remove ECC → Decompress → Decrypt (optional) → Secret File
+```
+
+---
+
+## Command Reference
+
+### 1. `keygen` - Generate Key Pair
+
+Generate a SECP256K1 elliptic curve key pair (same cryptography as Bitcoin).
+
+**Syntax:**
+```bash
+python3 main.py keygen [--private PATH] [--public PATH] [--password]
+```
+
+**Options:**
+- `--private PATH`: Output path for private key (default: `keys/my_private.pem`)
+- `--public PATH`: Output path for public key (default: `keys/my_public.pem`)
+- `--password`: Password-protect the private key (prompts for password)
+
+**Examples:**
+
+```bash
+# Generate default keys
+python3 main.py keygen
+
+# Generate keys with custom paths
+python3 main.py keygen --private keys/alice_private.pem --public keys/alice_public.pem
+
+# Generate password-protected keys
+python3 main.py keygen --password
+# Prompts: "Enter password to protect private key:"
+```
+
+**Output:**
+```
+Key pair generated
+Private: keys/my_private.pem
+Public:  keys/my_public.pem
+Fingerprint: 5f3a8b9c2e1d4f7a6b8c9d0e1f2a3b4c5d6e7f8a
+```
+
+**What Gets Created:**
+- **Private Key**: PEM format, PKCS8 encoding, optionally encrypted with password
+- **Public Key**: PEM format, unencrypted
+- **Fingerprint**: SHA256 double hash of public key (Bitcoin-style identifier)
+
+**Security Notes:**
+- Private key is sensitive - store securely
+- Share public key freely - recipients use it to encrypt for you
+- Fingerprint is a unique identifier (safe to share)
+
+---
+
+### 2. `info` - Check Capacity
+
+Analyze a cover file to determine how much data can be hidden.
+
+**Syntax:**
+```bash
+python3 main.py info --cover FILE [--secret FILE]
+```
+
+**Options:**
+- `--cover FILE`: Cover file to analyze (required)
+- `--secret FILE`: Check if a specific secret file will fit (optional)
+
+**Examples:**
+
+```bash
+# Check capacity of an image
+python3 main.py info --cover images/photo.jpg
+
+# Check if a file will fit
+python3 main.py info --cover images/photo.jpg --secret data/document.pdf
+```
+
+**Output Example:**
+```
+File: images/photo.jpg
+Type: image
+Size: 2,458,624 bytes (2400.00 KB)
+Capacity: 614,656 bytes (600.25 KB / 0.59 MB)
+
+Secret file: data/document.pdf
+Secret size: 245,760 bytes (240.00 KB)
+✓ Will fit! (40.0% of capacity)
+```
+
+**Or if too large:**
+```
+Secret size: 1,048,576 bytes (1024.00 KB)
+✗ Too large! Need to split into 2 parts
+  Use: --split 2
+```
+
+**Capacity Calculation by File Type:**
+
+| File Type | Algorithm | Capacity Formula |
+|-----------|-----------|------------------|
+| JPEG | F5 (DCT) | (DCT coeffs with \|coeff\| > 1) / 8 |
+| PNG/BMP | Fingerprint LSB | (width × height × 3 × 2) / 8 |
+| Audio (WAV/FLAC) | Phase Coding | (num_frames × 400 bins) / 8 |
+| Video (MP4) | H.264 Coeffs | file_size / 32 |
+| Text | Whitespace | file_size / 4 |
+
+---
+
+### 3. `embed` - Hide File in Cover
+
+Embed a secret file inside a cover file.
+
+**Syntax:**
+```bash
+python3 main.py embed --cover FILE --secret FILE [OPTIONS]
+```
+
+**Required Options:**
+- `--cover FILE`: Cover file (image/audio/video)
+- `--secret FILE`: Secret file to hide
+
+**Optional Options:**
+- `--out PATH`: Output file path or directory (default: `images/stego_output/`)
+- `--split N`: Split secret into N parts across multiple covers
+- `--encrypt`: Encrypt secret before embedding
+- `--recipient FILE`: Recipient's public key (required with `--encrypt`)
+
+**Examples:**
+
+```bash
+# Basic embedding (no encryption)
+python3 main.py embed --cover images/photo.jpg --secret data/message.txt
+
+# With encryption
+python3 main.py embed --cover images/photo.jpg --secret data/message.txt \
+  --encrypt --recipient keys/contacts/bob_public.pem
+
+# Custom output path
+python3 main.py embed --cover images/photo.jpg --secret data/message.txt \
+  --out images/stego_output/hidden.jpg
+
+# Split large file across multiple covers
+python3 main.py embed --cover images/photo.jpg --secret data/large.pdf \
+  --split 50 --encrypt --recipient keys/contacts/bob_public.pem
+
+# Split with custom output directory
+python3 main.py embed --cover images/photo.jpg --secret data/large.pdf \
+  --split 50 --out images/stego_output/mission1/
+```
+
+**Interactive Prompts:**
+
+For PNG/BMP images, you'll be asked to choose bit position:
+```
+Bit position:
+1 - LSB (least visible)
+2 - Middle
+3 - MSB (most visible)
+Choice (1/2/3): 1
+```
+
+**Output:**
+
+*Without encryption:*
+```
+Compressed: 5000 -> 3200 bytes (64.0%)
+Embedded 3200 bytes using F5 Algorithm: images/stego_output/stego.jpg
+Fingerprint: images/stego_output/.fingerprint
+```
+
+*With encryption:*
+```
+Encrypting with Bitcoin secp256k1...
+Encrypted: 5328 bytes (5.2 KB)
+Compressed: 5328 -> 4100 bytes (77.0%)
+Embedded 4100 bytes using F5 Algorithm: images/stego_output/stego.jpg
+Encrypted fingerprint: images/stego_output/.fingerprint.enc
+```
+
+*With split:*
+```
+Encrypting with Bitcoin secp256k1...
+Encrypted: 52480 bytes
+Splitting 52480 bytes into 50 parts...
+Part 1/50: images/stego_output/a3f9d8e2b1c4f5e6a7d8e9f0a1b2c3d4.jpg
+Part 2/50: images/stego_output/b4e0c9d3a2f1e5d6b7a8c9d0e1f2a3b4.jpg
+...
+Part 50/50: images/stego_output/f5e6d7c8b9a0f1e2d3c4b5a6d7e8f9a0.jpg
+
+✓ Success! Created 50 stego files in images/stego_output/
+✓ Fingerprint: images/stego_output/.fingerprint.enc
+```
+
+**What Gets Created:**
+- **Stego file(s)**: Cover file(s) with hidden data
+- **Fingerprint file**: `.fingerprint` (plain) or `.fingerprint.enc` (encrypted)
+- For audio: Output is `.flac` (high quality) or `.wav` (24-bit)
+- For split: Multiple files with random hex names + fingerprint
+
+**Algorithm Selection:**
+- `.jpg/.jpeg` → F5 algorithm (DCT coefficient embedding)
+- `.png/.bmp/.webp` → Fingerprint-based LSB embedding
+- Audio files → Differential phase coding (FLAC output)
+- Video files → H.264 NAL unit coefficient embedding
+- Text files → Trailing whitespace encoding
+
+---
+
+### 4. `extract` - Extract from Single Stego File
+
+Extract hidden data from a single stego file.
+
+**Syntax:**
+```bash
+python3 main.py extract --stego FILE [OPTIONS]
+```
+
+**Required Options:**
+- `--stego FILE`: Stego file containing hidden data
+
+**Optional Options:**
+- `--out PATH`: Output directory (default: `data/extracted/`)
+- `--decrypt`: Decrypt extracted data
+- `--private FILE`: Private key for decryption (required with `--decrypt`)
+- `--password`: Prompt for private key password
+
+**Examples:**
+
+```bash
+# Basic extraction (no decryption)
+python3 main.py extract --stego images/stego_output/stego.jpg
+
+# With decryption
+python3 main.py extract --stego images/stego_output/stego.jpg \
+  --decrypt --private keys/my_private.pem
+
+# With password-protected private key
+python3 main.py extract --stego images/stego_output/stego.jpg \
+  --decrypt --private keys/my_private.pem --password
+
+# Custom output directory
+python3 main.py extract --stego images/stego_output/stego.jpg \
+  --out data/extracted/mission1/ --decrypt --private keys/my_private.pem
+```
+
+**Output:**
+
+*Without decryption:*
+```
+Extracted 3200 bytes to: data/extracted/message.txt
+```
+
+*With decryption:*
+```
+Decrypting...
+Extracted 5000 bytes to: data/extracted/message.txt
+Decrypted: data/extracted/message.txt.decrypted
+```
+
+**Process Flow:**
+1. Locates `.fingerprint` or `.fingerprint.enc` in same directory as stego file
+2. Decrypts fingerprint (if encrypted) using private key
+3. Uses fingerprint to find embedded bit positions
+4. Extracts bits, removes ECC, decompresses
+5. Decrypts payload (if encrypted) using private key
+6. Saves to output directory with original filename
+
+**Automatic Detection:**
+- Fingerprint file is automatically found in stego file's directory
+- Algorithm is detected from file extension
+- No need to specify embedding parameters
+
+---
+
+### 5. `merge` - Merge Split Stego Files
+
+Reconstruct original file from multiple split stego files.
+
+**Syntax:**
+```bash
+python3 main.py merge --input PATTERN [OPTIONS]
+```
+
+**Required Options:**
+- `--input PATTERN`: Directory or glob pattern for split files
+
+**Optional Options:**
+- `--fingerprint FILE`: Fingerprint file path (auto-detected if not specified)
+- `--out PATH`: Output directory (default: `data/extracted/`)
+- `--decrypt`: Decrypt merged data
+- `--private FILE`: Private key for decryption (required with `--decrypt`)
+- `--password`: Prompt for private key password
+
+**Examples:**
+
+```bash
+# Merge from directory (auto-detects fingerprint)
+python3 main.py merge --input images/stego_output/
+
+# Merge with explicit fingerprint
+python3 main.py merge --input images/stego_output/ \
+  --fingerprint images/stego_output/.fingerprint
+
+# Merge with decryption
+python3 main.py merge --input images/stego_output/ \
+  --decrypt --private keys/my_private.pem
+
+# Merge from glob pattern
+python3 main.py merge --input 'images/stego_output/*.jpg' \
+  --decrypt --private keys/my_private.pem --password
+
+# Custom output directory
+python3 main.py merge --input images/stego_output/ \
+  --out data/extracted/mission1/ --decrypt --private keys/my_private.pem
+```
+
+**Output:**
+```
+Found 50 stego files
+Using fingerprint: images/stego_output/.fingerprint.enc
+Extracted part 0/50 from a3f9d8e2b1c4f5e6a7d8e9f0a1b2c3d4.jpg
+Extracted part 1/50 from b4e0c9d3a2f1e5d6b7a8c9d0e1f2a3b4.jpg
+...
+Extracted part 49/50 from f5e6d7c8b9a0f1e2d3c4b5a6d7e8f9a0.jpg
+
+Decrypting...
+
+✓ Merged file: data/extracted/large.pdf
+✓ Size: 52,480 bytes (51.2 KB)
+```
+
+**Process Flow:**
+1. Finds all files matching pattern (excludes `.fingerprint*` files)
+2. Locates and decrypts fingerprint file
+3. Extracts each part using fingerprint
+4. Parses split payload headers (magic, part number, total parts, filename)
+5. Assembles parts in correct order
+6. Decrypts merged data (if encrypted)
+7. Saves reconstructed file
+
+**Split Payload Format:**
+```
+[SPLT][fingerprint:16][total:2][part:2][size:8][name_len:2][name][data]
+```
+
+**Notes:**
+- All parts must be present for successful merge
+- Parts can be in any order (sorted by part number)
+- Missing parts will be detected and reported
+- Fingerprint file must match the one used during embed
+
+---
+
+### 6. `sign` - Sign File
+
+Create a digital signature for a file using your private key.
+
+**Syntax:**
+```bash
+python3 main.py sign --file FILE --private KEY [OPTIONS]
+```
+
+**Required Options:**
+- `--file FILE`: File to sign
+- `--private KEY`: Your private key
+
+**Optional Options:**
+- `--signature PATH`: Output signature path (default: `FILE.sig`)
+- `--password`: Prompt for private key password
+
+**Examples:**
+
+```bash
+# Basic signing
+python3 main.py sign --file data/contract.pdf --private keys/my_private.pem
+
+# Custom signature path
+python3 main.py sign --file data/contract.pdf --private keys/my_private.pem \
+  --signature signatures/contract_alice.sig
+
+# With password-protected key
+python3 main.py sign --file data/contract.pdf --private keys/my_private.pem \
+  --password
+```
+
+**Output:**
+```
+Signing...
+Signature: data/contract.pdf.sig
+```
+
+**Use Cases:**
+- Prove file authenticity
+- Verify file integrity
+- Non-repudiation (sender cannot deny sending)
+- Digital contracts and agreements
+
+**How It Works:**
+- Computes SHA256 hash of file
+- Signs hash with ECDSA (SECP256K1)
+- Signature is ~70 bytes (DER encoded)
+- Anyone with your public key can verify
+
+---
+
+### 7. `verify` - Verify Signature
+
+Verify a file's digital signature using signer's public key.
+
+**Syntax:**
+```bash
+python3 main.py verify --file FILE --signature SIG --public KEY
+```
+
+**Required Options:**
+- `--file FILE`: File to verify
+- `--signature SIG`: Signature file
+- `--public KEY`: Signer's public key
+
+**Examples:**
+
+```bash
+# Verify signature
+python3 main.py verify --file data/contract.pdf \
+  --signature data/contract.pdf.sig \
+  --public keys/contacts/alice_public.pem
+
+# Verify from different directory
+python3 main.py verify --file received/document.pdf \
+  --signature received/document.sig \
+  --public keys/contacts/bob_public.pem
+```
+
+**Output:**
+
+*Valid signature:*
+```
+Verifying...
+VALID signature
+Signed by: 5f3a8b9c2e1d4f7a6b8c9d0e1f2a3b4c5d6e7f8a
+```
+
+*Invalid signature:*
+```
+Verifying...
+INVALID signature
+(exits with error code 1)
+```
+
+**Verification Checks:**
+- File has not been modified since signing
+- Signature was created by holder of corresponding private key
+- Signature cryptographically matches file content
+
+**Security Model:**
+- Signature proves authenticity (sender identity)
+- Does NOT provide confidentiality (use `--encrypt` for that)
+- Combines well with steganography (hide signed files)
+
+---
+
+## Algorithms Explained
+
+### 1. F5 Algorithm (JPEG Images)
+
+**Concept:**
+F5 embeds data in JPEG DCT (Discrete Cosine Transform) coefficients, which are the compressed frequency components of the image.
+
+**How It Works:**
+
+1. **Read JPEG DCT Coefficients:**
+   ```
+   Original JPEG: [... -5, 7, -3, 11, 2, -8, 4, ...]
+   ```
+
+2. **Select Usable Coefficients:**
+   Only use coefficients where `|coeff| > 1` (to avoid creating zeros)
+   ```
+   Usable: [7, -3, 11, 2, -8, 4, ...]
+   ```
+
+3. **Generate Positions with Fingerprint:**
+   ```
+   PRNG(fingerprint) → [pos 42, pos 157, pos 891, ...]
+   ```
+
+4. **Embed Bits:**
+   For each bit, modify LSB of coefficient magnitude:
+   ```
+   Bit = 0, Coeff = 7  → Keep as 7 (LSB already 1)
+   Bit = 1, Coeff = 8  → Change to 9 (LSB becomes 1)
+   Bit = 0, Coeff = 11 → Change to 10 (LSB becomes 0)
+   ```
+
+5. **Write Modified JPEG:**
+   Coefficients are written back, image recompressed
+
+**Advantages:**
+- Imperceptible quality loss
+- Survives JPEG recompression (to some degree)
+- High capacity (thousands of coefficients)
+- Statistical steganalysis resistant (non-sequential embedding)
+
+**Limitations:**
+- JPEG only
+- Survives JPEG-to-JPEG, but not JPEG-to-PNG conversion
+- Re-saving at different quality may corrupt data (use ECC)
+
+**Capacity:**
+```
+Typical 2MB JPEG (2000x1500):
+- Total coefficients: ~100,000
+- Usable (|coeff| > 1): ~60,000
+- Capacity: 60,000 / 8 = 7,500 bytes ≈ 7 KB
+```
+
+---
+
+### 2. Differential Phase Coding (Audio)
+
+**Concept:**
+Embed data in the phase (timing) of audio frequencies, not amplitude (volume). Humans perceive amplitude but are less sensitive to phase.
+
+**How It Works:**
+
+1. **Convert to Frequency Domain (STFT):**
+   ```
+   Time domain: [sample1, sample2, sample3, ...]
+   ↓ FFT (4096 window, 1024 hop, Hann)
+   Frequency domain: [bin1, bin2, bin3, ...] (magnitude + phase)
+   ```
+
+2. **Select Bins 50-450 Hz:**
+   Avoid DC (bin 0), very low frequencies, and high frequencies
+   ```
+   Safe range: 50-450 Hz (400 bins per frame)
+   ```
+
+3. **Generate Positions with Fingerprint:**
+   ```
+   PRNG(fingerprint) → [frame 5 bin 123, frame 18 bin 67, ...]
+   ```
+
+4. **Differential Phase Encoding:**
+   Instead of absolute phase, modify phase difference between adjacent bins:
+   ```
+   Original: φ[bin] - φ[bin-1] = 0.5 rad
+   Bit 0: Keep φ[bin] - φ[bin-1] = 0.5 rad
+   Bit 1: Change to φ[bin] - φ[bin-1] = 0.7 rad (add δ = 0.2)
+   ```
+
+5. **Reconstruct Audio (ISTFT):**
+   ```
+   Modified spectrum → IFFT → Time domain → 24-bit FLAC/WAV
+   ```
+
+**Advantages:**
+- Inaudible to humans (phase changes < 0.5 rad)
+- High capacity (400 bins × many frames)
+- Survives compression better than amplitude methods
+- Perfect reconstruction with proper STFT parameters
+
+**Limitations:**
+- Lossy codecs (MP3 < 192 kbps) may corrupt data
+- Use FLAC or high-bitrate MP3 for storage
+- Longer files = more capacity (30s minimum recommended)
+
+**Quality Preservation:**
+- 32-bit float processing internally
+- 24-bit PCM output (CD quality is 16-bit)
+- FLAC format (lossless compression, 50% size of WAV)
+- Original: 3 MB MP3 → Output: ~15 MB FLAC (can convert back to 320kbps MP3)
+
+**Capacity:**
+```
+44.1 kHz, stereo, 60 seconds:
+- Samples: 2,646,000
+- Frames (4096 win, 1024 hop): ~2,575
+- Usable bins per frame: 400
+- Total positions: 2,575 × 400 = 1,030,000
+- Capacity: 1,030,000 / 8 = 128 KB
+```
+
+---
+
+### 3. H.264 Video Embedding
+
+**Concept:**
+Embed data in H.264 compressed video by modifying LSBs of motion vectors and transform coefficients in NAL (Network Abstraction Layer) units.
+
+**How It Works:**
+
+1. **Extract H.264 Bitstream:**
+   ```bash
+   ffmpeg -i video.mp4 -c:v copy -bsf:v h264_mp4toannexb -f h264 stream.h264
+   ```
+   Converts MP4 container to raw H.264 Annex B format
+
+2. **Parse NAL Units:**
+   ```
+   Bitstream: [0x00 0x00 0x00 0x01][NAL header][NAL data]...
+   NAL types: 1 (P-frame), 5 (I-frame), 7 (SPS), 8 (PPS)
+   ```
+
+3. **Find Slice NALs (Type 1 and 5):**
+   These contain video frame data with motion vectors and coefficients
+   ```
+   Type 1: P-frame (inter-coded, uses motion vectors)
+   Type 5: I-frame (intra-coded, uses transform coefficients)
+   ```
+
+4. **Select Safe Bytes:**
+   Only modify bytes that won't break H.264 syntax:
+   ```
+   Safe: 0x01-0xFE (avoid 0x00 and 0xFF)
+   Position: >5 bytes after NAL header (skip critical headers)
+   ```
+
+5. **Generate Positions with Fingerprint:**
+   ```
+   PRNG(fingerprint) → [pos 1247 in NAL #5, pos 3891 in NAL #18, ...]
+   ```
+
+6. **Embed in LSB:**
+   ```
+   Original byte: 0xA7 (10100111)
+   Bit 0: 0xA6 (10100110)
+   Bit 1: 0xA7 (10100111)
+   ```
+
+7. **Remux to MP4:**
+   ```bash
+   ffmpeg -i modified.h264 -i original.mp4 -map 0:v -map 1:a -c copy output.mp4
+   ```
+   Repackages H.264 stream back into MP4 container with audio
+
+**Advantages:**
+- Video quality unchanged (LSB modification imperceptible)
+- Large capacity (many NAL units)
+- Survives re-encoding at same bitrate
+- Audio stream preserved separately
+
+**Limitations:**
+- Requires ffmpeg installed
+- H.264 codec only (most common)
+- Re-encoding at different bitrate/resolution may corrupt
+- ECC helps recover from minor corruption
+
+**Safe Modification Rules:**
+- Never touch 0x00 bytes (emulation prevention)
+- Never touch 0xFF bytes (escape codes)
+- Skip first 5 bytes of each NAL (headers)
+- Only modify P-frames and I-frames (type 1, 5)
+- Keep modifications minimal (LSB only)
+
+**Capacity:**
+```
+10 MB video (H.264, 1080p, 30s):
+- NAL units: ~900 (30 fps × 30s)
+- Safe bytes per NAL: ~5,000
+- Total positions: 900 × 5,000 = 4,500,000
+- Capacity: 4,500,000 / 8 = 562 KB
+```
+
+---
+
+### 4. Fingerprint-Based LSB (PNG/BMP Images)
+
+**Concept:**
+Traditional LSB embeds sequentially. Fingerprint-based LSB uses PRNG to select random pixel positions.
+
+**How It Works:**
+
+1. **Flatten Image:**
+   ```
+   RGB Image (100×100): [R1, G1, B1, R2, G2, B2, ...]
+   Total values: 100 × 100 × 3 = 30,000
+   ```
+
+2. **Generate Positions:**
+   ```
+   PRNG(fingerprint) → [pos 1247, pos 3891, pos 12456, ...]
+   ```
+
+3. **Embed in LSB:**
+   ```
+   Pixel value: 10110110
+   Bit 0: 10110110 (already 0)
+   Bit 1: 10110111 (change to 1)
+   ```
+
+4. **Save Modified Image:**
+   PNG (lossless), quality 95 for JPEG
+
+**Bit Positions:**
+- LSB: Least significant bit (position 0) - invisible
+- Mid: Bit position 2 - slightly visible in flat colors
+- MSB: Most significant bit (position 7) - very visible
+
+**Advantages:**
+- Works on any image format
+- Imperceptible with LSB
+- Simple and fast
+- High capacity
+
+**Limitations:**
+- Doesn't survive lossy compression (JPEG conversion)
+- Sequential LSB detectable, fingerprint-based is not
+- PNG/BMP recommended for storage
+
+---
+
+## Workflows
+
+### Workflow 1: Alice Sends Encrypted File to Bob (Single Image)
+
+**Scenario:** Alice wants to send a confidential document to Bob hidden in an image.
+
+**Setup:**
+```bash
+# Alice generates her keys
+alice@computer:~$ python3 main.py keygen --private keys/alice_private.pem \
+  --public keys/alice_public.pem
+
+# Bob generates his keys
+bob@computer:~$ python3 main.py keygen --private keys/bob_private.pem \
+  --public keys/bob_public.pem
+
+# Bob sends his public key to Alice
+bob@computer:~$ cp keys/bob_public.pem /tmp/share/
+# Alice receives bob_public.pem
+```
+
+**Alice's Actions:**
+```bash
+# 1. Check if document fits in image
+alice@computer:~$ python3 main.py info --cover images/vacation.jpg \
+  --secret data/contract.pdf
+
+# Output:
+# Capacity: 150 KB
+# Secret size: 80 KB
+# ✓ Will fit! (53.3% of capacity)
+
+# 2. Embed with encryption
+alice@computer:~$ python3 main.py embed --cover images/vacation.jpg \
+  --secret data/contract.pdf --encrypt --recipient keys/bob_public.pem
+
+# Output:
+# Encrypting with Bitcoin secp256k1...
+# Encrypted: 82,144 bytes
+# Compressed: 82,144 -> 65,000 bytes (79.1%)
+# Embedded 65,000 bytes using F5 Algorithm: images/stego_output/stego.jpg
+# Encrypted fingerprint: images/stego_output/.fingerprint.enc
+
+# 3. Send to Bob (via email, USB, cloud, etc.)
+alice@computer:~$ cp images/stego_output/stego.jpg /tmp/send/
+alice@computer:~$ cp images/stego_output/.fingerprint.enc /tmp/send/
+```
+
+**Bob's Actions:**
+```bash
+# 1. Receive files
+bob@computer:~$ cp /tmp/received/stego.jpg .
+bob@computer:~$ cp /tmp/received/.fingerprint.enc .
+
+# 2. Extract and decrypt
+bob@computer:~$ python3 main.py extract --stego stego.jpg \
+  --decrypt --private keys/bob_private.pem
+
+# Output:
+# Decrypting...
+# Extracted 80,000 bytes to: data/extracted/contract.pdf
+# Decrypted: data/extracted/contract.pdf.decrypted
+
+# 3. View document
+bob@computer:~$ evince data/extracted/contract.pdf.decrypted
+```
+
+**Security:**
+- Only Bob can decrypt (only he has the private key)
+- Fingerprint is also encrypted (attacker can't find bit positions)
+- Even if attacker suspects steganography, can't extract without private key
+- Image looks normal, passes visual inspection
+
+---
+
+### Workflow 2: Large File Split Across Multiple Images
+
+**Scenario:** Alice needs to hide a 5 MB archive across multiple cover images.
+
+**Alice's Actions:**
+```bash
+# 1. Check capacity
+alice@computer:~$ python3 main.py info --cover images/photo.jpg \
+  --secret data/backup.zip
+
+# Output:
+# Capacity: 120 KB
+# Secret size: 5,120 KB (5 MB)
+# ✗ Too large! Need to split into 43 parts
+#   Use: --split 43
+
+# 2. Embed with split (round up to 50 for safety)
+alice@computer:~$ python3 main.py embed --cover images/photo.jpg \
+  --secret data/backup.zip --split 50 --encrypt \
+  --recipient keys/bob_public.pem --out images/mission/
+
+# Output:
+# Encrypting with Bitcoin secp256k1...
+# Encrypted: 5,242,880 bytes
+# Splitting 5,242,880 bytes into 50 parts...
+# Part 1/50: images/mission/a3f9d8e2b1c4f5e6a7d8e9f0a1b2c3d4.jpg
+# Part 2/50: images/mission/b4e0c9d3a2f1e5d6b7a8c9d0e1f2a3b4.jpg
+# ...
+# Part 50/50: images/mission/f5e6d7c8b9a0f1e2d3c4b5a6d7e8f9a0.jpg
+# 
+# ✓ Success! Created 50 stego files in images/mission/
+# ✓ Fingerprint: images/mission/.fingerprint.enc
+
+# 3. Send entire directory to Bob
+alice@computer:~$ zip -r mission.zip images/mission/
+alice@computer:~$ cp mission.zip /tmp/send/
+```
+
+**Bob's Actions:**
+```bash
+# 1. Receive and extract
+bob@computer:~$ unzip mission.zip
+
+# 2. Merge all parts
+bob@computer:~$ python3 main.py merge --input images/mission/ \
+  --decrypt --private keys/bob_private.pem
+
+# Output:
+# Found 50 stego files
+# Using fingerprint: images/mission/.fingerprint.enc
+# Extracted part 0/50 from a3f9d8e2b1c4f5e6a7d8e9f0a1b2c3d4.jpg
+# Extracted part 1/50 from b4e0c9d3a2f1e5d6b7a8c9d0e1f2a3b4.jpg
+# ...
+# Decrypting...
+# ✓ Merged file: data/extracted/backup.zip
+# ✓ Size: 5,242,880 bytes (5.0 MB)
+
+# 3. Verify and extract
+bob@computer:~$ unzip data/extracted/backup.zip
+```
+
+**Notes:**
+- Random hex filenames prevent pattern detection
+- All 50 files + fingerprint required
+- Files can be sent separately (e.g., 10 per email)
+- Missing even one file prevents extraction
+
+---
+
+### Workflow 3: High-Quality Audio Steganography
+
+**Scenario:** Alice wants to hide a message in a song.
+
+**Alice's Actions:**
+```bash
+# 1. Check audio capacity
+alice@computer:~$ python3 main.py info --cover audio/song.mp3
+
+# Output:
+# File: audio/song.mp3
+# Type: audio
+# Size: 4,200,000 bytes (4.10 MB)
+# Capacity: 250,000 bytes (244.14 KB / 0.24 MB)
+
+# 2. Embed in audio
+alice@computer:~$ python3 main.py embed --cover audio/song.mp3 \
+  --secret data/message.txt --encrypt --recipient keys/bob_public.pem
+
+# Output:
+# Encrypting with Bitcoin secp256k1...
+# Encrypted: 1,280 bytes
+# Compressed: 1,280 -> 890 bytes (69.5%)
+# Output will be saved as FLAC: images/stego_output/stego.flac
+# Embedded 890 bytes using Advanced Phase Coding: images/stego_output/stego.flac
+# Encrypted fingerprint: images/stego_output/.fingerprint.enc
+
+# 3. Listen to verify quality
+alice@computer:~$ vlc images/stego_output/stego.flac
+# (Sounds identical to original)
+
+# 4. Optional: Convert to MP3 for smaller size
+alice@computer:~$ ffmpeg -i images/stego_output/stego.flac \
+  -b:a 320k stego.mp3
+# (Recommend 320kbps to preserve data integrity)
+
+# 5. Send to Bob
+alice@computer:~$ cp images/stego_output/stego.flac /tmp/send/
+alice@computer:~$ cp images/stego_output/.fingerprint.enc /tmp/send/
+```
+
+**Bob's Actions:**
+```bash
+# 1. Receive files
+bob@computer:~$ cp /tmp/received/stego.flac .
+bob@computer:~$ cp /tmp/received/.fingerprint.enc .
+
+# 2. Extract
+bob@computer:~$ python3 main.py extract --stego stego.flac \
+  --decrypt --private keys/bob_private.pem
+
+# Output:
+# Decrypting...
+# Extracted 1,280 bytes to: data/extracted/message.txt
+# Decrypted: data/extracted/message.txt.decrypted
+
+# 3. Read message
+bob@computer:~$ cat data/extracted/message.txt.decrypted
+```
+
+**Audio Quality Notes:**
+- Input: MP3 (lossy, 3-5 MB)
+- Processing: Float32 (lossless)
+- Output: FLAC 24-bit (lossless, 15-20 MB)
+- Can convert to 320kbps MP3 (4-6 MB) after embedding
+- Phase changes < 0.2 rad (inaudible)
+- Survives MP3 encoding at 256kbps+
+
+---
+
+### Workflow 4: Video Steganography
+
+**Scenario:** Alice hides data in a video clip.
+
+**Requirements:**
+```bash
+# Check ffmpeg is installed
+alice@computer:~$ ffmpeg -version
+# Should show version info
+```
+
+**Alice's Actions:**
+```bash
+# 1. Check video capacity
+alice@computer:~$ python3 main.py info --cover video/clip.mp4
+
+# Output:
+# File: video/clip.mp4
+# Type: video
+# Size: 25,000,000 bytes (23.84 MB)
+# Capacity: 781,250 bytes (762.94 KB / 0.74 MB)
+
+# 2. Embed in video
+alice@computer:~$ python3 main.py embed --cover video/clip.mp4 \
+  --secret data/plans.pdf --encrypt --recipient keys/bob_public.pem
+
+# Output:
+# Encrypting with Bitcoin secp256k1...
+# Encrypted: 52,480 bytes
+# Compressed: 52,480 -> 38,900 bytes (74.1%)
+# Embedded 38,900 bytes in H.264 video: images/stego_output/stego.mp4
+# Encrypted fingerprint: images/stego_output/.fingerprint.enc
+
+# 3. Verify video plays normally
+alice@computer:~$ vlc images/stego_output/stego.mp4
+
+# 4. Send to Bob
+alice@computer:~$ cp images/stego_output/stego.mp4 /tmp/send/
+alice@computer:~$ cp images/stego_output/.fingerprint.enc /tmp/send/
+```
+
+**Bob's Actions:**
+```bash
+# 1. Extract
+bob@computer:~$ python3 main.py extract --stego stego.mp4 \
+  --decrypt --private keys/bob_private.pem
+
+# Output:
+# Decrypting...
+# Extracted 52,480 bytes to: data/extracted/plans.pdf
+# Decrypted: data/extracted/plans.pdf.decrypted
+```
+
+**Video Notes:**
+- H.264 codec required (most MP4 videos)
+- Video quality unchanged (LSB modification)
+- File size increases slightly (~1-5%) due to remuxing
+- Audio stream preserved
+- Survives re-upload to some platforms (YouTube may re-encode)
+
+---
+
+### Workflow 5: Digital Signatures for Authentication
+
+**Scenario:** Alice signs a contract and sends to Bob, Bob verifies authenticity.
+
+**Alice's Actions:**
+```bash
+# 1. Sign contract
+alice@computer:~$ python3 main.py sign --file data/contract.pdf \
+  --private keys/alice_private.pem
+
+# Output:
+# Signing...
+# Signature: data/contract.pdf.sig
+
+# 2. Send both files to Bob
+alice@computer:~$ cp data/contract.pdf /tmp/send/
+alice@computer:~$ cp data/contract.pdf.sig /tmp/send/
+```
+
+**Bob's Actions:**
+```bash
+# 1. Receive files
+bob@computer:~$ cp /tmp/received/contract.pdf .
+bob@computer:~$ cp /tmp/received/contract.pdf.sig .
+
+# 2. Verify signature with Alice's public key
+bob@computer:~$ python3 main.py verify --file contract.pdf \
+  --signature contract.pdf.sig --public keys/alice_public.pem
+
+# Output:
+# Verifying...
+# VALID signature
+# Signed by: 5f3a8b9c2e1d4f7a6b8c9d0e1f2a3b4c5d6e7f8a
+```
+
+**If File is Modified:**
+```bash
+# Someone changes the contract
+attacker@computer:~$ echo "extra clause" >> contract.pdf
+
+# Bob tries to verify
+bob@computer:~$ python3 main.py verify --file contract.pdf \
+  --signature contract.pdf.sig --public keys/alice_public.pem
+
+# Output:
+# Verifying...
+# INVALID signature
+# (exits with error)
+```
+
+**Combined with Steganography:**
+```bash
+# Alice signs, then embeds signed document
+alice@computer:~$ python3 main.py sign --file data/contract.pdf \
+  --private keys/alice_private.pem
+
+alice@computer:~$ python3 main.py embed --cover images/photo.jpg \
+  --secret data/contract.pdf --encrypt --recipient keys/bob_public.pem
+
+# Bob extracts, then verifies signature
+bob@computer:~$ python3 main.py extract --stego stego.jpg \
+  --decrypt --private keys/bob_private.pem
+
+bob@computer:~$ python3 main.py verify --file data/extracted/contract.pdf \
+  --signature data/extracted/contract.pdf.sig --public keys/alice_public.pem
+```
+
+---
+
+## Security Model
+
+### Threat Model
+
+**Attacker Capabilities:**
+- Has access to stego files
+- Knows steganography is being used
+- Can perform statistical analysis
+- May have access to original cover files
+- Does NOT have private keys
+
+**Protection Mechanisms:**
+
+| Threat | Protection | How It Works |
+|--------|------------|--------------|
+| Content disclosure | SECP256K1 encryption | Payload encrypted with recipient's public key |
+| Pattern detection | Fingerprint-based embedding | Non-sequential, random position selection |
+| Statistical analysis | ECC + compression | Payload looks random, spread across file |
+| Fingerprint theft | Encrypted fingerprint | Fingerprint encrypted with recipient's public key |
+| Man-in-the-middle | Digital signatures | Sign files to verify sender identity |
+| Key compromise | Perfect forward secrecy | Each file uses unique ephemeral keys (ECDH) |
+
+### Cryptographic Primitives
+
+**1. Elliptic Curve: SECP256K1**
+- Same curve as Bitcoin
+- 256-bit security (equivalent to 3072-bit RSA)
+- Public key: 65 bytes (uncompressed)
+- Private key: 32 bytes
+- Signature: ~70 bytes (DER encoded)
+
+**2. Key Exchange: ECDH (Elliptic Curve Diffie-Hellman)**
+- Ephemeral private key generated for each encryption
+- Shared secret computed: `shared = ephemeral_private × recipient_public`
+- Ephemeral public key included in ciphertext (65 bytes)
+
+**3. Symmetric Encryption: AES-256-GCM**
+- Derived from ECDH shared secret via HKDF-SHA256
+- 256-bit key (32 bytes)
+- GCM mode provides authenticated encryption
+- 12-byte nonce (random)
+- 16-byte authentication tag
+
+**4. Hash Function: SHA-256**
+- Fingerprint generation (double SHA-256, Bitcoin-style)
+- PRNG seeding
+- Digital signatures (ECDSA-SHA256)
+
+**5. Error Correction: Reed-Solomon**
+- 32 ECC symbols (32 bytes overhead)
+- Can correct up to 16 byte errors
+- Protects against lossy compression, transmission errors
+
+**6. Compression: zlib**
+- Level 9 (maximum)
+- Reduces payload size by 30-70% for text
+- Applied before encryption
+
+### Ciphertext Format
+
+**Encrypted File:**
+```
+[ephemeral_pub_len:2][ephemeral_pub:65][nonce:12][tag:16][ciphertext:N]
+```
+
+**Breakdown:**
+- Bytes 0-1: Length of ephemeral public key (always 65)
+- Bytes 2-66: Ephemeral public key (uncompressed point)
+- Bytes 67-78: AES-GCM nonce (random)
+- Bytes 79-94: AES-GCM authentication tag
+- Bytes 95+: Encrypted payload
+
+**Total Overhead:** 95 bytes per encrypted file
+
+### Key Management Best Practices
+
+**DO:**
+- ✓ Generate separate key pairs for each identity
+- ✓ Password-protect private keys with strong passwords
+- ✓ Set private key file permissions to 600 (read/write owner only)
+- ✓ Back up private keys securely (encrypted USB, password manager)
+- ✓ Share public keys freely (via email, key servers, website)
+- ✓ Verify public key fingerprints out-of-band (phone call, in person)
+
+**DON'T:**
+- ✗ Share private keys with anyone
+- ✗ Store private keys in cloud without encryption
+- ✗ Reuse keys across different applications
+- ✗ Use weak passwords for key protection
+- ✗ Keep unencrypted backups of private keys
+- ✗ Accept public keys without fingerprint verification
+
+### Attack Resistance
+
+**Statistical Steganalysis:**
+- Traditional LSB: Sequential embedding is detectable via chi-square test
+- Our system: Fingerprint-based randomized positions resist chi-square, RS analysis
+- Compressed + ECC payload has high entropy (looks random)
+
+**Known-Cover Attack:**
+- Attacker compares original and stego files
+- Mitigation: Don't reuse cover files, use large image databases
+- F5 (JPEG): Changes are in DCT domain, hard to compare pixel-by-pixel
+
+**Chosen-Cover Attack:**
+- Attacker provides cover files, analyzes output
+- Mitigation: Fingerprint is encrypted, different for each embedding
+
+**Brute Force:**
+- SECP256K1: 2^128 security (128-bit quantum resistance)
+- Fingerprint: 2^128 combinations (16 bytes)
+- AES-256: 2^256 key space
+- Computationally infeasible with current technology
+
+---
+
+## File Format Specifications
+
+### 1. Standard Payload Format
+
+Used for single-file embedding.
+
+```
+[MAGIC:4][file_size:8][name_len:2][filename:N][file_data:M]
+```
+
+**Fields:**
+- `MAGIC`: `0x53544547` ("STEG" in ASCII)
+- `file_size`: 8-byte big-endian unsigned int (max 2^64 bytes)
+- `name_len`: 2-byte big-endian unsigned int (max 65535)
+- `filename`: UTF-8 encoded filename
+- `file_data`: Raw file bytes
+
+**Example:**
+```
+Filename: "secret.pdf" (10 bytes)
+File size: 5,000 bytes
+
+Hex:
+53 54 45 47                          # MAGIC ("STEG")
+00 00 00 00 00 00 13 88             # file_size = 5,000
+00 0A                                # name_len = 10
+73 65 63 72 65 74 2E 70 64 66       # "secret.pdf"
+25 50 44 46 2D 31 2E 34 ...          # PDF file data
+```
+
+### 2. Split Payload Format
+
+Used for multi-file split embedding.
+
+```
+[SPLIT_MAGIC:4][fingerprint:16][total_parts:2][part_num:2][part_size:8][name_len:2][filename:N][part_data:M]
+```
+
+**Fields:**
+- `SPLIT_MAGIC`: `0x53504C54` ("SPLT" in ASCII)
+- `fingerprint`: 16-byte fingerprint (SHA-256 hash, truncated)
+- `total_parts`: 2-byte big-endian unsigned int (max 65535 parts)
+- `part_num`: 2-byte big-endian unsigned int (0-indexed)
+- `part_size`: 8-byte big-endian unsigned int (bytes in this part)
+- `name_len`: 2-byte big-endian unsigned int
+- `filename`: UTF-8 encoded original filename
+- `part_data`: Raw bytes for this part
+
+**Example:**
+```
+Filename: "large.pdf" (9 bytes)
+Part 0 of 50, part size: 1,049 bytes
+Fingerprint: a3f9d8e2b1c4f5e6a7d8e9f0a1b2c3d4
+
+Hex:
+53 50 4C 54                          # SPLIT_MAGIC ("SPLT")
+a3 f9 d8 e2 b1 c4 f5 e6              # fingerprint (16 bytes)
+a7 d8 e9 f0 a1 b2 c3 d4
+00 32                                # total_parts = 50
+00 00                                # part_num = 0
+00 00 00 00 00 00 04 19             # part_size = 1,049
+00 09                                # name_len = 9
+6C 61 72 67 65 2E 70 64 66          # "large.pdf"
+25 50 44 46 ...                      # Part 0 data
+```
+
+### 3. Encrypted Fingerprint Format
+
+Fingerprint file when `--encrypt` is used.
+
+**Filename:** `.fingerprint.enc`
+
+**Format:**
+```
+[ephemeral_pub_len:2][ephemeral_pub:65][nonce:12][tag:16][ciphertext:16]
+```
+
+Same as encrypted file format, but ciphertext is the 16-byte fingerprint seed (originally 32-byte hex string).
+
+**Example:**
+```
+Plaintext fingerprint seed: "a3f9d8e2b1c4f5e6a7d8e9f0a1b2c3d4" (32 bytes)
+
+Encrypted .fingerprint.enc:
+00 41                                # ephemeral_pub_len = 65
+04 ...                               # Ephemeral public key (65 bytes)
+a1 b2 c3 ...                         # Nonce (12 bytes)
+d4 e5 f6 ...                         # Tag (16 bytes)
+7f 8a 9b ...                         # Encrypted seed (32 bytes)
+```
+
+**Permissions:** 600 (read/write owner only) on Unix systems
+
+### 4. Plain Fingerprint Format
+
+Fingerprint file when `--encrypt` is NOT used.
+
+**Filename:** `.fingerprint`
+
+**Format:**
+```
+[fingerprint_seed:32]
+```
+
+**Example:**
+```
+a3f9d8e2b1c4f5e6a7d8e9f0a1b2c3d4
+```
+
+Plain text, 32-byte hex string (16 bytes of entropy).
+
+### 5. Digital Signature Format
+
+**Filename:** `[original_file].sig`
+
+**Format:**
+```
+[DER_encoded_ECDSA_signature:~70]
+```
+
+ECDSA signature in DER (Distinguished Encoding Rules) format.
+
+**Example:**
+```
+30 44 02 20                          # DER sequence
+5f 3a 8b 9c ...                      # r value (32 bytes)
+02 20                                # Integer
+2e 1d 4f 7a ...                      # s value (32 bytes)
+```
+
+**Size:** Typically 70-72 bytes (varies slightly due to DER encoding)
+
+---
+
+## Troubleshooting
+
+### Installation Issues
+
+**Problem:** `pip install jpegio` fails
+
+**Solution:**
+```bash
+# Install libjpeg development headers
+sudo apt install libjpeg-dev
+
+# Then retry
+pip install jpegio --break-system-packages
+```
+
+---
+
+**Problem:** `ImportError: No module named 'soundfile'`
+
+**Solution:**
+```bash
+# Install libsndfile
+sudo apt install libsndfile1
+
+# Then install soundfile
+pip install soundfile --break-system-packages
+```
+
+---
+
+**Problem:** `ffmpeg: command not found`
+
+**Solution:**
+```bash
+# Ubuntu/Debian
+sudo apt update && sudo apt install ffmpeg
+
+# macOS
+brew install ffmpeg
+
+# Verify
+ffmpeg -version
+```
+
+---
+
+### Embedding Issues
+
+**Problem:** `Error: Data too large: need 50000 bits, capacity 30000 bits`
+
+**Solution:**
+```bash
+# Option 1: Use larger cover file
+python3 main.py info --cover larger_image.jpg
+
+# Option 2: Split into multiple files
+python3 main.py embed --cover image.jpg --secret file.pdf --split 3
+
+# Option 3: Compress secret file first
+zip secret.zip secret_file
+python3 main.py embed --cover image.jpg --secret secret.zip
+```
+
+---
+
+**Problem:** `Error: Video file too small`
+
+**Solution:**
+```bash
+# Use longer video (>10 seconds)
+# Or reduce secret file size
+# Or split across multiple videos
+python3 main.py embed --cover video.mp4 --secret file.pdf --split 5
+```
+
+---
+
+**Problem:** `Error: Audio too short`
+
+**Solution:**
+```bash
+# Use longer audio (>30 seconds recommended)
+# Or concatenate multiple audio files
+ffmpeg -i audio1.mp3 -i audio2.mp3 -filter_complex concat=n=2:v=0:a=1 combined.mp3
+python3 main.py embed --cover combined.mp3 --secret file.txt
+```
+
+---
+
+**Problem:** `Error: Recipient public key not found`
+
+**Solution:**
+```bash
+# Ensure recipient has generated and shared their public key
+# Verify file path
+ls -l keys/contacts/bob_public.pem
+
+# If missing, request from recipient
+```
+
+---
+
+### Extraction Issues
+
+**Problem:** `Error: Fingerprint file not found`
+
+**Solution:**
+```bash
+# Ensure .fingerprint or .fingerprint.enc is in same directory as stego file
+ls -la images/stego_output/
+
+# If split files, fingerprint should be in the directory
+python3 main.py merge --input stego_output/ --fingerprint stego_output/.fingerprint.enc
+```
+
+---
+
+**Problem:** `Error: Could not extract valid data`
+
+**Solution:**
+```bash
+# 1. Verify correct fingerprint file
+# 2. Check if file was modified/recompressed
+# 3. For encrypted, ensure correct private key
+python3 main.py extract --stego file.jpg --decrypt --private keys/correct_private.pem
+
+# 4. For audio, ensure WAV/FLAC format (not MP3)
+ffmpeg -i stego.mp3 stego.wav
+python3 main.py extract --stego stego.wav
+```
+
+---
+
+**Problem:** `Error: Decrypting... Error decrypting file: <crypto error>`
+
+**Solution:**
+```bash
+# 1. Ensure you're using the correct private key
+# 2. Check if private key has password
+python3 main.py extract --stego file.jpg --decrypt --private keys/my_private.pem --password
+
+# 3. Verify file was encrypted with your public key
+# 4. Check fingerprint file matches stego file
+```
+
+---
+
+**Problem:** `Error: INVALID signature`
+
+**Solution:**
+```bash
+# 1. File has been modified since signing
+# 2. Wrong public key used for verification
+# 3. Signature file corrupted
+
+# Verify public key fingerprint with sender
+python3 main.py keygen --public keys/alice_public.pem
+# Compare fingerprint out-of-band
+```
+
+---
+
+### Quality Issues
+
+**Problem:** Stego image looks degraded
+
+**Solution:**
+```bash
+# For PNG: Use LSB (default), avoid MSB
+# For JPEG: Use quality 95
+# F5 algorithm is automatic for JPEG and preserves quality well
+
+# Check bit position
+# During embed, choose "1 - LSB (least visible)"
+```
+
+---
+
+**Problem:** Stego audio sounds distorted
+
+**Solution:**
+```bash
+# 1. Ensure output is FLAC or high-bitrate WAV
+# 2. Don't convert stego audio to low-bitrate MP3 (<256 kbps)
+# 3. Check if too much data embedded
+
+python3 main.py info --cover audio.mp3 --secret file.txt
+# Verify secret < 50% of capacity for best quality
+```
+
+---
+
+**Problem:** Stego audio file is 5x larger than original
+
+**Solution:**
+```bash
+# This is expected behavior for quality preservation
+# Input: 3 MB MP3 (lossy) → Output: 15 MB FLAC (lossless)
+
+# To reduce size, convert to high-bitrate MP3 after embedding:
+ffmpeg -i stego.flac -b:a 320k stego.mp3
+
+# Warning: Conversion may corrupt data, test extraction first
+python3 main.py extract --stego stego.mp3 --decrypt --private keys/my_private.pem
+```
+
+---
+
+**Problem:** Stego video file size increased
+
+**Solution:**
+```bash
+# Expected: 1-5% increase due to remuxing
+# If >10% increase, video may have been re-encoded
+
+# Check codec
+ffprobe stego.mp4 | grep codec
+
+# Should show: codec_name=h264, codec_type=video
+# If different, extraction may fail
+```
+
+---
+
+### Split File Issues
+
+**Problem:** `Error: No files found matching pattern`
+
+**Solution:**
+```bash
+# Verify directory path
+ls images/stego_output/
+
+# Use correct pattern
+python3 main.py merge --input 'images/stego_output/*.jpg'
+# Or just directory
+python3 main.py merge --input images/stego_output/
+```
+
+---
+
+**Problem:** `Warning: Expected 50 parts but found 48`
+
+**Solution:**
+```bash
+# Missing files - cannot reconstruct
+# All parts required for merge
+# Re-send missing parts
+
+# Check which parts are present
+ls images/stego_output/ | wc -l
+# Should show 50 files + 1 fingerprint = 51 total
+```
+
+---
+
+**Problem:** Merge succeeds but file is corrupted
+
+**Solution:**
+```bash
+# 1. Verify all parts from same embed operation (same fingerprint)
+# 2. Check if any files were modified
+# 3. Try with ECC correction (automatic)
+
+# If using encrypted, ensure correct private key
+python3 main.py merge --input stego_output/ --decrypt --private keys/my_private.pem
+```
+
+---
+
+### Permission Issues
+
+**Problem:** `Permission denied: .fingerprint.enc`
+
+**Solution:**
+```bash
+# File has 600 permissions (owner read/write only)
+# Ensure you own the file
+ls -l .fingerprint.enc
+
+# If needed, change permissions
+chmod 600 .fingerprint.enc
+
+# Or if you're the owner
+chown $USER .fingerprint.enc
+```
+
+---
+
+### Platform-Specific Issues
+
+**Problem:** Windows path issues
+
+**Solution:**
+```python
+# Use forward slashes or raw strings
+python3 main.py embed --cover "C:/Users/Alice/image.jpg" --secret "C:/Users/Alice/secret.txt"
+
+# Or raw strings
+python3 main.py embed --cover r"C:\Users\Alice\image.jpg" --secret r"C:\Users\Alice\secret.txt"
+```
+
+---
+
+**Problem:** macOS permission denied for private key
+
+**Solution:**
+```bash
+# Ensure correct permissions
+chmod 600 keys/my_private.pem
+
+# Ensure file is not in protected location (e.g., iCloud)
+```
+
+---
+
+## Advanced Topics
+
+### Custom Fingerprint Seeds
+
+**Manual fingerprint for reproducibility:**
+
+```bash
+# Generate your own seed
+SEED="my-custom-seed-12345678901234567890"
+
+# Save to file
+echo -n "$SEED" > .fingerprint
+
+# Embed with manual fingerprint
+# (Note: main.py generates automatically, but you can replace)
+python3 main.py embed --cover image.jpg --secret file.txt
+# After embed, replace .fingerprint with your custom seed
+
+# Extract will use your custom seed
+python3 main.py extract --stego stego.jpg
+```
+
+**Use case:** Multiple stego files with same fingerprint for coordinated extraction.
+
+---
+
+### Capacity Optimization
+
+**Maximizing capacity:**
+
+1. **Use high-resolution images:**
+   ```bash
+   # 4K image (3840×2160): ~8 million pixels
+   # Capacity: ~6 MB (for PNG LSB)
+   ```
+
+2. **Use long audio files:**
+   ```bash
+   # 5-minute audio: ~18 MB capacity
+   # 1-hour audio: ~200 MB capacity
+   ```
+
+3. **Use high-bitrate video:**
+   ```bash
+   # 1080p, 30 fps, 10 minutes: ~50 MB capacity
+   ```
+
+4. **Compress secrets before embedding:**
+   ```bash
+   # Text: 70-90% compression
+   # PDF: 30-50% compression
+   # Already compressed (ZIP, JPG): minimal benefit
+   
+   zip -9 secret.zip large_text.txt
+   python3 main.py embed --cover image.jpg --secret secret.zip
+   ```
+
+---
+
+### Steganalysis Resistance
+
+**Making stego files harder to detect:**
+
+1. **Use diverse cover files:**
+   - Don't reuse same cover image
+   - Mix different image types (photos, graphics)
+   - Use naturally noisy covers (photos vs. screenshots)
+
+2. **Keep capacity utilization low:**
+   - <50% capacity = harder to detect
+   - Spread-spectrum embedding already applied
+
+3. **Use encrypted fingerprints always:**
+   - Even if payload is unencrypted
+   - Prevents position analysis
+
+4. **Avoid patterns:**
+   - Random filenames (automatic with --split)
+   - Don't embed in sequential files
+   - Vary file types (images, audio, video)
+
+---
+
+### Performance Tuning
+
+**Speed vs. quality tradeoffs:**
+
+```python
+# Edit steganography.py for custom parameters:
+
+# Audio - faster but lower capacity:
+win_len = 2048  # (default: 4096)
+hop_len = 512   # (default: 1024)
+
+# Audio - slower but higher quality:
+win_len = 8192
+hop_len = 2048
+
+# F5 - adjust compression:
+compressed_payload = zlib.compress(payload_bytes, level=6)  # (default: 9)
+```
+
+**Parallel processing for split files:**
+
+Currently sequential. Could modify to use `multiprocessing`:
+
+```python
+from multiprocessing import Pool
+
+def embed_part(args):
+    cover, part, output = args
+    embed_universal(cover, part, output)
+
+with Pool(4) as pool:  # 4 parallel processes
+    pool.map(embed_part, part_args)
+```
+
+---
+
+## Contributing
+
+This is a reference implementation. Improvements welcome:
+
+- Additional steganography algorithms
+- Support for more file types
+- Improved error correction
+- Performance optimizations
+- GUI interface
+- Network transfer utilities
+
+---
+
+## License
+
+Educational and research use. Ensure compliance with local laws regarding cryptography and steganography.
+
+---
+
+## References
+
+### Academic Papers
+
+1. **F5 Algorithm:**
+   Westfeld, A. (2001). "F5—A Steganographic Algorithm: High Capacity Despite Better Steganalysis"
+
+2. **Phase Coding:**
+   Bender, W. et al. (1996). "Techniques for Data Hiding"
+
+3. **SECP256K1:**
+   SEC 2: Recommended Elliptic Curve Domain Parameters
+
+4. **Reed-Solomon:**
+   Reed, I. S.; Solomon, G. (1960). "Polynomial Codes over Certain Finite Fields"
+
+### Tools Used
+
+- `jpegio`: JPEG DCT coefficient access
+- `soundfile`: Professional audio I/O (libsndfile wrapper)
+- `scipy`: Scientific computing (FFT, signal processing)
+- `cryptography`: Modern cryptographic primitives
+- `reedsolo`: Pure Python Reed-Solomon implementation
+- `ffmpeg`: Universal media converter
+
+---
+
+## FAQ
+
+**Q: Can stego files be detected?**
+
+A: Difficult but not impossible. Our fingerprint-based approach resists common steganalysis. Keep capacity utilization <50% for best stealth.
+
+**Q: Will stego survive social media upload?**
+
+A: Depends on platform:
+- Twitter/X: Re-encodes images (likely corrupted)
+- Facebook: Re-encodes (likely corrupted)
+- Imgur: Sometimes preserves (PNG may survive)
+- Direct file transfer: Yes (email attachments, USB, etc.)
+
+Best practice: Use direct file sharing, not social media.
+
+**Q: How secure is SECP256K1?**
+
+A: Same as Bitcoin. 128-bit quantum-safe security. Would take billions of years to brute force with current technology.
+
+**Q: Can I use same key pair for multiple files?**
+
+A: Yes. Public key can be reused indefinitely. Each encryption uses unique ephemeral keys (ECDH).
+
+**Q: What if I forget my password?**
+
+A: Private key is unrecoverable without password. Store password securely (password manager).
+
+**Q: Can I embed stego in stego (nested)?**
+
+A: Yes, but quality degrades. Better to encrypt and split instead of double-embedding.
+
+**Q: Maximum file size?**
+
+A: Theoretical: 2^64 bytes (18 exabytes). Practical: Limited by cover file capacity and memory.
+
+---
+
+## Conclusion
+
+This steganography system provides military-grade security with Bitcoin-style encryption, advanced embedding algorithms, and fingerprint-based pattern concealment. Use responsibly and in accordance with applicable laws.
+
+For questions, issues, or contributions, contact the development team.
+
+**Stay secure. Stay hidden.**
